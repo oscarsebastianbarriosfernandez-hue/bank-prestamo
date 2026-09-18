@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { authRepository } from "../repositories/authRepository";
 import type { Loan } from "../types/auth";
@@ -48,7 +49,7 @@ function HomePage() {
     navigate("/login", { replace: true });
   };
 
-  const requestLoan = (event: React.FormEvent<HTMLFormElement>) => {
+  const requestLoan = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const loan = authRepository.createLoan(user.id, amount, months);
     if (!loan) {
