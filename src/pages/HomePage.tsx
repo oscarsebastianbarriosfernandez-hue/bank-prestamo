@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { authRepository } from "../repositories/authRepository";
-import type { Loan } from "../types/auth";
 
 type Section = "inicio" | "solicitar" | "estado" | "historial" | "perfil";
 
