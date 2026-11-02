@@ -193,3 +193,43 @@ input[type="range"] { accent-color:#167447; padding:0; }
   .user-menu span:not(.avatar) { display:none; }
   .welcome h1 { font-size:28px; }
 }
+
+
+/* Mejoras de organización del historial y pagos */
+.history-table { overflow-x: auto; }
+.loan-history-table .table-head,
+.loan-history-table .table-row {
+  min-width: 820px;
+  grid-template-columns: 1fr 1.15fr 1.1fr 1.1fr .85fr .85fr;
+}
+.payment-history-head,
+.payment-history-row {
+  min-width: 620px;
+  grid-template-columns: 1fr 1.2fr 1.2fr 1fr;
+}
+.compact-button { padding: 8px 10px; font-size: 11px; white-space: nowrap; }
+.payment-amount-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 8px 0 20px;
+  padding: 16px 18px;
+  border: 1px solid #dcebe0;
+  border-radius: 14px;
+  background: #f3f9f5;
+}
+.payment-amount-preview span { color: #60776a; font-size: 13px; font-weight: 600; }
+.payment-amount-preview strong { color: #176c43; font-size: 22px; }
+.payment-amount-preview small { width: 100%; color: #84928b; font-size: 11px; }
+.history-summary { margin: 22px 0; }
+.history-subtitle { margin: 25px 0 8px; color: #193e2f; }
+.back-link { display: inline-block; }
+@media (max-width: 600px) {
+  .payment-amount-preview { align-items: flex-start; flex-direction: column; }
+  .loan-history-table .table-head,
+  .loan-history-table .table-row,
+  .payment-history-head,
+  .payment-history-row { text-align: left; }
+}

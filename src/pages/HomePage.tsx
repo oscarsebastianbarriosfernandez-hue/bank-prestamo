@@ -3,13 +3,16 @@ import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { authRepository } from "../repositories/authRepository";
 
-type Section = "inicio" | "solicitar" | "estado" | "historial" | "perfil";
+type Section = "inicio" | "solicitar" | "estado" | "historial" | "historial-pagos" | "perfil";
+type PaymentType = "CUOTA" | "TOTAL";
 
 const money = (value: number) =>
   new Intl.NumberFormat("es-BO", { style: "currency", currency: "BOB" }).format(value);
 
 const date = (value: string) =>
   new Intl.DateTimeFormat("es-BO", { dateStyle: "medium" }).format(new Date(value));
+
+const statusLabel = (status: string) => status === "PAGADO" ? "Pagado" : status;
 
 function HomePage() {
   const navigate = useNavigate();
@@ -18,9 +21,10 @@ function HomePage() {
   const [refresh, setRefresh] = useState(0);
   const [amount, setAmount] = useState(5000);
   const [months, setMonths] = useState(12);
-  const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("Transferencia");
+  const [paymentType, setPaymentType] = useState<PaymentType>("CUOTA");
   const [selectedLoan, setSelectedLoan] = useState("");
+  const [historyLoan, setHistoryLoan] = useState("");
   const [message, setMessage] = useState("");
 
   if (!user) {
@@ -34,9 +38,16 @@ function HomePage() {
   const available = authRepository.getAvailableCredit(user.id);
   const activeLoans = loans.filter((loan) => loan.estado === "ACTIVO");
   const totalDebt = activeLoans.reduce((sum, loan) => sum + loan.saldo, 0);
-
-  const simulationTotal = amount * (1 + 0.12 * (months / 12));
-  const monthly = simulationTotal / months;
+  const selectedLoanRecord = activeLoans.find((loan) => loan.id_prestamo === selectedLoan);
+  const paymentAmount = selectedLoanRecord
+    ? paymentType === "TOTAL"
+      ? selectedLoanRecord.saldo
+      : Math.min(selectedLoanRecord.cuota_mensual, selectedLoanRecord.saldo)
+    : 0;
+  const historyLoanRecord = loans.find((loan) => loan.id_prestamo === historyLoan);
+  const historyPayments = payments
+    .filter((payment) => payment.id_prestamo === historyLoan)
+    .sort((a, b) => new Date(b.fecha_pago).getTime() - new Date(a.fecha_pago).getTime());
 
   const showMessage = (text: string) => {
     setMessage(text);
@@ -50,6 +61,10 @@ function HomePage() {
 
   const requestLoan = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (activeLoans.length >= 2) {
+      showMessage("Ya tienes dos préstamos activos. Termina uno para solicitar otro.");
+      return;
+    }
     const loan = authRepository.createLoan(user.id, amount, months);
     if (!loan) {
       showMessage("No se pudo solicitar el préstamo. Revisa el monto disponible.");
@@ -60,25 +75,31 @@ function HomePage() {
     setSection("estado");
   };
 
-  const pay = (event: React.FormEvent<HTMLFormElement>) => {
+  const pay = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const loan = loans.find((item) => item.id_prestamo === selectedLoan);
-    const value = Number(paymentAmount);
-
-    if (!loan || !value || value <= 0 || value > loan.saldo) {
-      showMessage("Ingresa un monto válido para la cuota seleccionada.");
+    if (!selectedLoanRecord || paymentAmount <= 0) {
+      showMessage("Selecciona un préstamo activo.");
       return;
     }
 
-    const result = authRepository.payLoan(user.id, loan.id_prestamo, value, paymentMethod);
+    const result = authRepository.payLoan(
+      user.id,
+      selectedLoanRecord.id_prestamo,
+      paymentAmount,
+      paymentMethod,
+      paymentType
+    );
     if (!result) {
-      showMessage("No se pudo registrar el pago.");
+      showMessage("No se pudo registrar el pago. Verifica el préstamo seleccionado.");
       return;
     }
 
-    setPaymentAmount("");
-    showMessage("Pago registrado correctamente.");
+    showMessage(paymentType === "TOTAL" ? "¡Préstamo cancelado por completo!" : "Cuota registrada correctamente.");
     setRefresh((current) => current + 1);
+    if (paymentType === "TOTAL" || paymentAmount >= selectedLoanRecord.saldo) {
+      setSelectedLoan("");
+      setPaymentType("CUOTA");
+    }
   };
 
   const go = (target: Section) => {
@@ -86,13 +107,17 @@ function HomePage() {
     setMessage("");
   };
 
-  const sectionTitle = {
+  const sectionTitle: Record<Section, string> = {
     inicio: "Resumen de tu cuenta",
     solicitar: "Solicitar préstamo",
     estado: "Estado de préstamos",
     historial: "Historial de préstamos",
+    "historial-pagos": "Historial de pagos",
     perfil: "Mi perfil",
-  }[section];
+  };
+
+  const simulationTotal = amount * (1 + 0.12 * (months / 12));
+  const monthly = simulationTotal / months;
 
   return (
     <div className="app-shell">
@@ -105,7 +130,7 @@ function HomePage() {
         <nav className="top-nav">
           <button className={section === "inicio" ? "nav-active" : ""} onClick={() => go("inicio")} type="button">Inicio</button>
           <button className={section === "estado" ? "nav-active" : ""} onClick={() => go("estado")} type="button">Mis préstamos</button>
-          <button className={section === "historial" ? "nav-active" : ""} onClick={() => go("historial")} type="button">Historial</button>
+          <button className={section === "historial" || section === "historial-pagos" ? "nav-active" : ""} onClick={() => go("historial")} type="button">Historial</button>
         </nav>
 
         <div className="user-menu">
@@ -121,7 +146,7 @@ function HomePage() {
         <section className="welcome">
           <div>
             <span className="eyebrow">PANEL DEL CLIENTE</span>
-            <h1>{sectionTitle}</h1>
+            <h1>{sectionTitle[section]}</h1>
             <p>Hola, {user.name.split(" ")[0]}. Gestiona tus préstamos desde un solo lugar.</p>
           </div>
           <div className="balance-card">
@@ -131,12 +156,12 @@ function HomePage() {
           </div>
         </section>
 
-        {message && <div className="toast">{message}</div>}
+        {message && <div className="toast" role="status">{message}</div>}
 
         {section === "inicio" && (
           <>
             <section className="stats-grid">
-              <div className="stat-card"><span>Préstamos activos</span><strong>{activeLoans.length}</strong><small>Operaciones vigentes</small></div>
+              <div className="stat-card"><span>Préstamos activos</span><strong>{activeLoans.length} / 2</strong><small>Máximo permitido</small></div>
               <div className="stat-card"><span>Deuda actual</span><strong>{money(totalDebt)}</strong><small>Saldo pendiente</small></div>
               <div className="stat-card"><span>Pagos realizados</span><strong>{payments.length}</strong><small>Registrados en el sistema</small></div>
             </section>
@@ -144,8 +169,8 @@ function HomePage() {
             <section className="action-grid">
               <button className="action-card green-card" onClick={() => go("solicitar")} type="button"><span>＋</span><strong>Solicitar préstamo</strong><small>Simula y registra una nueva solicitud</small></button>
               <button className="action-card" onClick={() => go("estado")} type="button"><span>⌕</span><strong>Consultar estado</strong><small>Revisa saldos y préstamos activos</small></button>
-              <button className="action-card" onClick={() => go("estado")} type="button"><span>▣</span><strong>Pagar cuotas</strong><small>Registra un pago de demostración</small></button>
-              <button className="action-card" onClick={() => go("historial")} type="button"><span>▤</span><strong>Historial</strong><small>Consulta tus operaciones anteriores</small></button>
+              <button className="action-card" onClick={() => go("estado")} type="button"><span>▣</span><strong>Pagar cuotas</strong><small>Paga la cuota exacta o cancela el saldo</small></button>
+              <button className="action-card" onClick={() => go("historial")} type="button"><span>▤</span><strong>Historial</strong><small>Consulta préstamos y sus pagos</small></button>
             </section>
 
             <section className="info-panel">
@@ -161,13 +186,15 @@ function HomePage() {
               <div className="panel-heading"><div><span className="eyebrow">NUEVA OPERACIÓN</span><h2>Solicitud de préstamo</h2></div><span className="panel-icon">₿</span></div>
               <p className="muted">Elige un monto y plazo para generar una operación de prueba.</p>
 
-              <div className="field"><label htmlFor="amount">Monto solicitado: {money(amount)}</label><input id="amount" type="range" min="500" max={Math.max(500, available)} step="500" value={amount} onChange={e => setAmount(Number(e.target.value))} /><div className="range-labels"><span>Bs 500</span><span>Bs {Math.round(available).toLocaleString("es-BO")}</span></div></div>
+              {activeLoans.length >= 2 && <div className="form-error">Ya alcanzaste el máximo de dos préstamos activos. Debes pagar uno antes de solicitar otro.</div>}
+
+              <div className="field"><label htmlFor="amount">Monto solicitado: {money(amount)}</label><input id="amount" type="range" min="500" max={Math.max(500, available)} step="500" value={Math.min(amount, Math.max(500, available))} onChange={e => setAmount(Number(e.target.value))} /><div className="range-labels"><span>Bs 500</span><span>Bs {Math.round(available).toLocaleString("es-BO")}</span></div></div>
 
               <div className="field"><label htmlFor="months">Plazo</label><select id="months" value={months} onChange={e => setMonths(Number(e.target.value))}><option value={6}>6 meses</option><option value={12}>12 meses</option><option value={18}>18 meses</option><option value={24}>24 meses</option></select></div>
 
               <div className="loan-summary"><div><span>Monto</span><strong>{money(amount)}</strong></div><div><span>Interés demo</span><strong>12% anual</strong></div><div><span>Cuota estimada</span><strong>{money(monthly)}</strong></div><div><span>Total estimado</span><strong>{money(simulationTotal)}</strong></div></div>
 
-              <button className="primary-button full" type="submit" disabled={amount > available || available <= 0}>Solicitar préstamo</button>
+              <button className="primary-button full" type="submit" disabled={activeLoans.length >= 2 || amount > available || available <= 0}>Solicitar préstamo</button>
               <small className="legal-note">Valores únicamente demostrativos para el proyecto académico.</small>
             </form>
 
@@ -175,34 +202,36 @@ function HomePage() {
               <div className="side-illustration">💳</div>
               <h3>¿Cómo funciona?</h3>
               <ol><li>Selecciona monto y plazo.</li><li>Revisa la cuota estimada.</li><li>Registra la solicitud.</li><li>Consulta y paga desde tu panel.</li></ol>
+              <p className="muted">Puedes mantener hasta dos préstamos activos al mismo tiempo.</p>
             </aside>
           </section>
         )}
 
         {section === "estado" && (
           <section className="panel">
-            <div className="panel-heading"><div><span className="eyebrow">SEGUIMIENTO</span><h2>Mis préstamos</h2></div><span className="count-pill">{loans.length} registros</span></div>
+            <div className="panel-heading"><div><span className="eyebrow">SEGUIMIENTO</span><h2>Mis préstamos</h2></div><span className="count-pill">{activeLoans.length} de 2 activos</span></div>
             {loans.length === 0 ? <div className="empty-state"><span>◌</span><h3>Aún no tienes préstamos</h3><p>Solicita tu primer préstamo de prueba para verlo aquí.</p><button className="primary-button" onClick={() => go("solicitar")} type="button">Solicitar préstamo</button></div> : (
               <div className="loan-list">
                 {loans.map((loan) => (
                   <article className="loan-row" key={loan.id_prestamo}>
                     <div className="loan-main"><span className="loan-number">#{loan.id_prestamo.slice(-6).toUpperCase()}</span><h3>{money(loan.monto)}</h3><p>{loan.plazo_meses} meses · {loan.interes}% anual · {date(loan.fecha_prestamo)}</p></div>
-                    <div className="loan-balance"><span>Saldo</span><strong>{money(loan.saldo)}</strong><em className={loan.estado === "PAGADO" ? "status paid" : "status"}>{loan.estado}</em></div>
-                    {loan.estado === "ACTIVO" && <button className="outline-button" onClick={() => { setSelectedLoan(loan.id_prestamo); setSection("estado"); }} type="button">Pagar</button>}
+                    <div className="loan-balance"><span>Saldo pendiente</span><strong>{money(loan.saldo)}</strong><em className={loan.estado === "PAGADO" ? "status paid" : "status"}>{statusLabel(loan.estado)}</em></div>
+                    {loan.estado === "ACTIVO" && <button className="outline-button" onClick={() => { setSelectedLoan(loan.id_prestamo); setPaymentType("CUOTA"); }} type="button">Seleccionar para pagar</button>}
                   </article>
                 ))}
               </div>
             )}
 
-            {loans.some(loan => loan.estado === "ACTIVO") && (
+            {activeLoans.length > 0 && (
               <form className="payment-box" onSubmit={pay}>
-                <div><span className="eyebrow">PAGO DE CUOTA</span><h3>Registrar pago</h3></div>
+                <div><span className="eyebrow">PAGO CONTROLADO</span><h3>Realizar un pago</h3><p className="muted">El sistema calcula el importe permitido; no necesitas escribirlo manualmente.</p></div>
                 <div className="form-grid">
-                  <div className="field"><label htmlFor="loanSelect">Préstamo</label><select id="loanSelect" value={selectedLoan} onChange={e => setSelectedLoan(e.target.value)}><option value="">Selecciona</option>{activeLoans.map(loan => <option key={loan.id_prestamo} value={loan.id_prestamo}>#{loan.id_prestamo.slice(-6).toUpperCase()} · {money(loan.saldo)}</option>)}</select></div>
-                  <div className="field"><label htmlFor="payment">Monto a pagar</label><input id="payment" type="number" min="1" step="0.01" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder="Ej. 500" required /></div>
-                  <div className="field"><label htmlFor="method">Método</label><select id="method" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}><option>Transferencia</option><option>Tarjeta</option><option>Efectivo</option></select></div>
+                  <div className="field"><label htmlFor="loanSelect">Préstamo activo</label><select id="loanSelect" value={selectedLoan} onChange={e => setSelectedLoan(e.target.value)} required><option value="">Selecciona un préstamo</option>{activeLoans.map(loan => <option key={loan.id_prestamo} value={loan.id_prestamo}>#{loan.id_prestamo.slice(-6).toUpperCase()} · Saldo {money(loan.saldo)}</option>)}</select></div>
+                  <div className="field"><label htmlFor="paymentType">Tipo de pago</label><select id="paymentType" value={paymentType} onChange={e => setPaymentType(e.target.value as PaymentType)}><option value="CUOTA">Pagar cuota exacta</option><option value="TOTAL">Pagar todo lo que debo</option></select></div>
+                  <div className="field"><label htmlFor="method">Método de pago</label><select id="method" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}><option>Transferencia</option><option>Tarjeta</option><option>Efectivo</option></select></div>
                 </div>
-                <button className="primary-button" type="submit">Registrar pago</button>
+                {selectedLoanRecord && <div className="payment-amount-preview"><span>{paymentType === "TOTAL" ? "Importe para cancelar el préstamo" : "Importe exacto de la cuota"}</span><strong>{money(paymentAmount)}</strong>{paymentType === "CUOTA" && paymentAmount < selectedLoanRecord.cuota_mensual && <small>Este es el saldo restante, menor que una cuota completa.</small>}</div>}
+                <button className="primary-button" type="submit" disabled={!selectedLoanRecord}>Confirmar pago</button>
               </form>
             )}
           </section>
@@ -210,12 +239,31 @@ function HomePage() {
 
         {section === "historial" && (
           <section className="panel">
-            <div className="panel-heading"><div><span className="eyebrow">REGISTROS</span><h2>Historial de préstamos</h2></div></div>
-            {loans.length === 0 && payments.length === 0 ? <div className="empty-state"><span>▤</span><h3>No hay historial todavía</h3><p>Aquí aparecerán tus préstamos y pagos.</p></div> : <div className="history-table">
-              <div className="table-head"><span>Préstamo</span><span>Fecha</span><span>Monto</span><span>Estado</span></div>
-              {loans.map(loan => <div className="table-row" key={loan.id_prestamo}><span>#{loan.id_prestamo.slice(-6).toUpperCase()}</span><span>{date(loan.fecha_prestamo)}</span><span>{money(loan.monto)}</span><span className="status">{loan.estado}</span></div>)}
-              {payments.map(payment => <div className="table-row payment-row" key={payment.id_pago}><span>Pago #{payment.id_pago.slice(-6).toUpperCase()}</span><span>{date(payment.fecha_pago)}</span><span>{money(payment.monto_pago)}</span><span className="status paid">{payment.metodo_pago}</span></div>)}
+            <div className="panel-heading"><div><span className="eyebrow">REGISTROS</span><h2>Historial de préstamos</h2><p className="muted">Aquí se muestran únicamente los préstamos. Abre uno para consultar sus pagos.</p></div><span className="count-pill">{loans.length} préstamos</span></div>
+            {loans.length === 0 ? <div className="empty-state"><span>▤</span><h3>No hay préstamos registrados</h3><p>Cuando solicites un préstamo aparecerá aquí.</p></div> : <div className="history-table loan-history-table">
+              <div className="table-head"><span>Préstamo</span><span>Fecha</span><span>Monto inicial</span><span>Saldo</span><span>Estado</span><span>Detalle</span></div>
+              {loans.slice().sort((a, b) => new Date(b.fecha_prestamo).getTime() - new Date(a.fecha_prestamo).getTime()).map(loan => (
+                <div className="table-row" key={loan.id_prestamo}>
+                  <span>#{loan.id_prestamo.slice(-6).toUpperCase()}</span><span>{date(loan.fecha_prestamo)}</span><span>{money(loan.monto)}</span><span>{money(loan.saldo)}</span><span><em className={loan.estado === "PAGADO" ? "status paid" : "status"}>{statusLabel(loan.estado)}</em></span>
+                  <span><button className="outline-button compact-button" type="button" onClick={() => { setHistoryLoan(loan.id_prestamo); go("historial-pagos"); }}>Ver pagos</button></span>
+                </div>
+              ))}
             </div>}
+          </section>
+        )}
+
+        {section === "historial-pagos" && (
+          <section className="panel">
+            <button className="back-link" type="button" onClick={() => go("historial")}>← Volver al historial de préstamos</button>
+            {historyLoanRecord ? <>
+              <div className="panel-heading"><div><span className="eyebrow">DETALLE DEL PRÉSTAMO</span><h2>Pagos del préstamo #{historyLoanRecord.id_prestamo.slice(-6).toUpperCase()}</h2></div><em className={historyLoanRecord.estado === "PAGADO" ? "status paid" : "status"}>{statusLabel(historyLoanRecord.estado)}</em></div>
+              <div className="loan-summary history-summary"><div><span>Monto inicial</span><strong>{money(historyLoanRecord.monto)}</strong></div><div><span>Saldo pendiente</span><strong>{money(historyLoanRecord.saldo)}</strong></div><div><span>Cuota mensual</span><strong>{money(historyLoanRecord.cuota_mensual)}</strong></div><div><span>Fecha del préstamo</span><strong>{date(historyLoanRecord.fecha_prestamo)}</strong></div></div>
+              <h3 className="history-subtitle">Pagos registrados</h3>
+              {historyPayments.length === 0 ? <div className="empty-state"><h3>Este préstamo aún no tiene pagos</h3><p>Cuando realices un pago, aparecerá detallado aquí.</p></div> : <div className="history-table">
+                <div className="table-head payment-history-head"><span>Pago</span><span>Fecha</span><span>Importe pagado</span><span>Método</span></div>
+                {historyPayments.map(payment => <div className="table-row payment-history-row" key={payment.id_pago}><span>#{payment.id_pago.slice(-6).toUpperCase()}</span><span>{date(payment.fecha_pago)}</span><span>{money(payment.monto_pago)}</span><span>{payment.metodo_pago}</span></div>)}
+              </div>}
+            </> : <div className="empty-state"><h3>No se encontró el préstamo</h3><button className="outline-button" onClick={() => go("historial")} type="button">Volver</button></div>}
           </section>
         )}
 

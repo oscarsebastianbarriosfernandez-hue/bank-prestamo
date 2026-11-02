@@ -162,6 +162,9 @@ export const authRepository = {
     const currentLoans = database.prestamos.filter(
       (loan) => loan.id_cliente === client.id_cliente && loan.estado === "ACTIVO"
     );
+    // Regla del sistema: cada cliente puede mantener como máximo dos préstamos activos.
+    if (currentLoans.length >= 2) return null;
+
     const activeBalance = currentLoans.reduce((sum, loan) => sum + loan.saldo, 0);
     const available = Math.max(0, 20000 - activeBalance);
     if (amount > available) return null;
@@ -187,25 +190,38 @@ export const authRepository = {
     return loan;
   },
 
-  payLoan(userId: string, loanId: string, amount: number, method: string): Payment | null {
+  payLoan(
+    userId: string,
+    loanId: string,
+    amount: number,
+    method: string,
+    paymentType: "CUOTA" | "TOTAL" = "CUOTA"
+  ): Payment | null {
     const database = getDatabase();
     const loan = database.prestamos.find((item) => item.id_prestamo === loanId);
-    if (!loan || amount <= 0 || amount > loan.saldo) return null;
+    if (!loan || loan.estado !== "ACTIVO" || amount <= 0) return null;
 
     const userLoans = this.getLoans(userId);
     if (!userLoans.some((item) => item.id_prestamo === loanId)) return null;
 
+    // Solo se admite la cuota exacta (o el saldo restante si es la última)
+    // o la cancelación completa del saldo.
+    const expectedAmount =
+      paymentType === "TOTAL"
+        ? Number(loan.saldo.toFixed(2))
+        : Number(Math.min(loan.cuota_mensual, loan.saldo).toFixed(2));
+    if (Number(amount.toFixed(2)) !== expectedAmount) return null;
+
     const payment: Payment = {
       id_pago: makeId("pago"),
       id_prestamo: loanId,
-      monto_pago: Number(amount.toFixed(2)),
+      monto_pago: expectedAmount,
       fecha_pago: new Date().toISOString(),
       metodo_pago: method,
     };
 
-    loan.saldo = Number((loan.saldo - amount).toFixed(2));
-    if (loan.saldo <= 0) {
-      loan.saldo = 0;
+    loan.saldo = Number(Math.max(0, loan.saldo - expectedAmount).toFixed(2));
+    if (loan.saldo === 0) {
       loan.estado = "PAGADO";
     }
 
